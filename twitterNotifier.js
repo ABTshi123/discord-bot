@@ -26,7 +26,7 @@ async function fetchTweetFeed(username) {
         return feed;
       }
     } catch (e) {
-      continue; // 접속 불가 시 다음 미러 시도
+      continue;
     }
   }
   return null;
@@ -49,29 +49,68 @@ async function checkLatestTweet(username, discordChannel) {
 
     lastTweetMap.set(username, tweetId);
 
-    let content = latestTweet.contentSnippet || latestTweet.content || '내용 없음';
-    content = content.replace(/<[^>]*>/g, '').trim();
+    let rawContent = latestTweet.contentSnippet || latestTweet.content || '';
+    let link = latestTweet.link || `https://x.com/${username}`;
 
-    const embed = new EmbedBuilder()
-      .setColor('#1DA1F2')
-      .setAuthor({
-        name: `@${username} 님의 새로운 트윗`,
-        iconURL: 'https://abs.twimg.com/icons/apple-touch-icon-192x192.png'
-      })
-      .setTitle(latestTweet.title ? latestTweet.title.substring(0, 256) : '새 트윗이 등록되었습니다.')
-      .setURL(latestTweet.link)
-      .setDescription(content)
-      .setTimestamp(new Date(latestTweet.pubDate || Date.now()))
-      .setFooter({ text: 'Twitter (X) 알림' });
+    // 스페이스 URL 패턴 감지 (x.com/i/spaces/ 또는 twitter.com/i/spaces/)
+    const spaceMatch = rawContent.match(/https?:\/\/(x|twitter)\.com\/i\/spaces\/[a-zA-Z0-9]+/i) ||
+                       link.match(/https?:\/\/(x|twitter)\.com\/i\/spaces\/[a-zA-Z0-9]+/i);
 
-    const btn = new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setLabel('트윗 보러가기')
-        .setURL(latestTweet.link)
-        .setStyle(ButtonStyle.Link)
-    );
+    const displayName = feed.title ? feed.title.replace(/ \/ Twitter| \/ X/, '').trim() : username;
+    const authorName = `${displayName} (@${username})`;
 
-    await discordChannel.send({ embeds: [embed], components: [btn] });
+    // 1. 트위터 스페이스 알림 처리
+    if (spaceMatch) {
+      const spaceUrl = spaceMatch[0].replace('twitter.com', 'x.com');
+
+      const embed = new EmbedBuilder()
+        .setColor('#8a2be2') // 보라색 테두리
+        .setAuthor({
+          name: authorName,
+          iconURL: 'https://abs.twimg.com/icons/apple-touch-icon-192x192.png'
+        })
+        .setTitle(`${displayName}님이 트위터 스페이스를 시작했어요!`)
+        .setDescription(`${spaceUrl}\n\n**Master URL:** [Link](${spaceUrl})\n**Final URL:** [Link](${spaceUrl})`)
+        .setTimestamp(new Date(latestTweet.pubDate || Date.now()))
+        .setFooter({
+          text: 'Twitter',
+          iconURL: 'https://abs.twimg.com/icons/apple-touch-icon-192x192.png'
+        });
+
+      const btn = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setLabel('스페이스 입장')
+          .setURL(spaceUrl)
+          .setStyle(ButtonStyle.Link)
+      );
+
+      await discordChannel.send({ embeds: [embed], components: [btn] });
+    } 
+    // 2. 일반 트윗 알림 처리
+    else {
+      let content = rawContent.replace(/<[^>]*>/g, '').trim() || '내용 없음';
+
+      const embed = new EmbedBuilder()
+        .setColor('#1DA1F2')
+        .setAuthor({
+          name: authorName,
+          iconURL: 'https://abs.twimg.com/icons/apple-touch-icon-192x192.png'
+        })
+        .setTitle(latestTweet.title ? latestTweet.title.substring(0, 256) : '새 트윗이 등록되었습니다.')
+        .setURL(link)
+        .setDescription(content)
+        .setTimestamp(new Date(latestTweet.pubDate || Date.now()))
+        .setFooter({ text: 'Twitter (X) 알림' });
+
+      const btn = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setLabel('트윗 보러가기')
+          .setURL(link)
+          .setStyle(ButtonStyle.Link)
+      );
+
+      await discordChannel.send({ embeds: [embed], components: [btn] });
+    }
   } catch (error) {
     console.log(`[Twitter Monitor] @${username} 트윗 업데이트 확인 중...`);
   }
