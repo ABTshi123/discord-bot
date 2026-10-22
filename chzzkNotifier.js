@@ -19,13 +19,9 @@ function getConfig() {
   }
 }
 
-// GitHub REST API를 이용해 config.json 원격 저장소 백업
 async function pushConfigToGithubAPI() {
   const token = process.env.GITHUB_TOKEN;
-  if (!token) {
-    console.log('[Config Sync Warning] GITHUB_TOKEN이 .env에 등록되어 있지 않습니다.');
-    return;
-  }
+  if (!token) return;
 
   const owner = 'ABTshi123';
   const repo = 'discord-bot';
@@ -33,7 +29,6 @@ async function pushConfigToGithubAPI() {
   const content = fs.readFileSync(CONFIG_PATH, 'utf8');
   const base64Content = Buffer.from(content).toString('base64');
 
-  // 1. 기존 파일의 SHA 값 가져오기
   const optionsGet = {
     hostname: 'api.github.com',
     path: `/repos/${owner}/${repo}/contents/${filePath}`,
@@ -55,7 +50,6 @@ async function pushConfigToGithubAPI() {
         if (json.sha) sha = json.sha;
       } catch (e) {}
 
-      // 2. GitHub API로 파일 덮어쓰기 (Update File)
       const postData = JSON.stringify({
         message: 'Auto-update config.json via GitHub API [skip ci]',
         content: base64Content,
@@ -74,21 +68,14 @@ async function pushConfigToGithubAPI() {
         }
       };
 
-      const reqPut = https.request(optionsPut, (resPut) => {
-        if (resPut.statusCode === 200 || resPut.statusCode === 201) {
-          console.log('[Config Sync Success] GitHub API로 config.json 백업 완료!');
-        } else {
-          console.log(`[Config Sync Error] API 응답 코드: ${resPut.statusCode}`);
-        }
-      });
-
-      reqPut.on('error', (e) => console.error('[Config Sync Request Error]:', e.message));
+      const reqPut = https.request(optionsPut, (resPut) => {});
+      reqPut.on('error', () => {});
       reqPut.write(postData);
       reqPut.end();
     });
   });
 
-  reqGet.on('error', (e) => console.error('[Config Sync SHA Fetch Error]:', e.message));
+  reqGet.on('error', () => {});
   reqGet.end();
 }
 
@@ -102,9 +89,7 @@ async function fetchLiveDetail(channelId) {
     if (typeof chzzk.live?.detail === 'function') return await chzzk.live.detail(channelId);
     if (typeof chzzk.live?.get === 'function') return await chzzk.live.get(channelId);
     if (typeof chzzk.channel?.getLiveDetail === 'function') return await chzzk.channel.getLiveDetail(channelId);
-  } catch (e) {
-    console.error(`[Chzzk Fetch Error] ${channelId}:`, e.message);
-  }
+  } catch (e) {}
   return null;
 }
 
@@ -117,36 +102,78 @@ function createLinkButton(url) {
   );
 }
 
-async function connectStreamerChat(channelId, discordChannel, streamerName) {
-  if (activeChatSockets[channelId]) return;
+// 라이브 채팅 실시간 연결 및 타 채널 감지 로직
+async function connectStreamerChat(targetChannelId, hostStreamerName, client) {
+  if (activeChatSockets[targetChannelId]) return;
 
   try {
-    const chat = chzzk.chat({ channelId });
-    activeChatSockets[channelId] = chat;
+    const chat = chzzk.chat({ channelId: targetChannelId });
+    activeChatSockets[targetChannelId] = chat;
 
     chat.on('chat', async (msg) => {
-      if (msg.profile && msg.profile.isOwner) {
-        const liveUrl = `https://chzzk.naver.com/live/${channelId}`;
-        const profileImage = msg.profile.profileImageUrl || 'https://nng-phinf.pstatic.net/Chzzk_Logo.png';
-        const chatMsg = msg.hidden ? '숨겨진 메시지입니다.' : msg.msg;
+      if (!msg.profile) return;
 
-        const embed = new EmbedBuilder()
-          .setColor(0x4287f5)
-          .setAuthor({ name: streamerName, iconURL: profileImage })
-          .setTitle(`${streamerName}님이 채팅을 남겼어요.`)
-          .setDescription(chatMsg)
-          .setTimestamp();
+      const config = getConfig();
+      if (!config.chzzk) return;
 
-        await discordChannel.send({
-          embeds: [embed],
-          components: [createLinkButton(liveUrl)]
-        }).catch(() => null);
+      const senderUserIdHash = msg.profile.userIdHash || msg.userIdHash;
+      const chatMsg = msg.hidden ? '숨겨진 메시지입니다.' : msg.msg;
+      const liveUrl = `https://chzzk.naver.com/live/${targetChannelId}`;
+      const profileImage = msg.profile.profileImageUrl || 'https://nng-phinf.pstatic.net/Chzzk_Logo.png';
+
+      // 1. 본인 방송 채널에서 방장이 채팅을 친 경우
+      if (msg.profile.isOwner) {
+        const myConfig = config.chzzk[targetChannelId];
+        if (myConfig && myConfig.channelId) {
+          const discordChannel = await client.channels.fetch(myConfig.channelId).catch(() => null);
+          if (discordChannel) {
+            const embed = new EmbedBuilder()
+              .setColor(0x4287f5)
+              .setAuthor({ name: hostStreamerName, iconURL: profileImage })
+              .setTitle(`${hostStreamerName}님이 채팅을 남겼어요.`)
+              .setDescription(chatMsg)
+              .setTimestamp();
+
+            await discordChannel.send({
+              embeds: [embed],
+              components: [createLinkButton(liveUrl)]
+            }).catch(() => null);
+          }
+        }
+      } 
+      // 2. 다른 스트리머(등록된 대상들) 방송 채팅창에 출몰하여 메시지를 남긴 경우
+      else {
+        for (const streamerChannelId in config.chzzk) {
+          // 채팅 작성자가 등록된 타 스트리머(자신의 채널이 아닌 곳에 출몰)일 때
+          if (streamerChannelId !== targetChannelId && streamerChannelId === senderUserIdHash) {
+            const registeredTarget = config.chzzk[streamerChannelId];
+            if (!registeredTarget || !registeredTarget.channelId) continue;
+
+            const discordChannel = await client.channels.fetch(registeredTarget.channelId).catch(() => null);
+            if (discordChannel) {
+              const visitorName = msg.profile.nickname || registeredTarget.name || '스트리머';
+
+              // 스크린샷과 100% 동일한 양식으로 발송
+              const embed = new EmbedBuilder()
+                .setColor(0x4287f5)
+                .setAuthor({ name: visitorName, iconURL: profileImage })
+                .setTitle(`${visitorName}님이 ${hostStreamerName}님의 채팅창에 메시지를 남겼어요.`)
+                .setDescription(chatMsg)
+                .setTimestamp();
+
+              await discordChannel.send({
+                embeds: [embed],
+                components: [createLinkButton(liveUrl)]
+              }).catch(() => null);
+            }
+          }
+        }
       }
     });
 
     await chat.connect();
   } catch (e) {
-    console.error(`[Chzzk Chat Error] ${channelId}:`, e.message);
+    console.error(`[Chzzk Chat Error] ${targetChannelId}:`, e.message);
   }
 }
 
@@ -199,7 +226,7 @@ async function startChzzkMonitoring(client) {
               embeds: [embed],
               components: [createLinkButton(liveUrl)]
             });
-            connectStreamerChat(channelId, discordChannel, streamerName);
+            connectStreamerChat(channelId, streamerName, client);
           }
           else if (isLive && wasLive && (prevTitle !== liveTitle || prevCategory !== category)) {
             const embed = new EmbedBuilder()
@@ -216,7 +243,7 @@ async function startChzzkMonitoring(client) {
             });
           }
           else if (isLive) {
-            connectStreamerChat(channelId, discordChannel, streamerName);
+            connectStreamerChat(channelId, streamerName, client);
           }
           else if (!isLive && wasLive) {
             disconnectStreamerChat(channelId);
