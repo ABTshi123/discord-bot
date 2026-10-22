@@ -1,7 +1,8 @@
 const Parser = require('rss-parser');
 const parser = new Parser({
+  timeout: 10000,
   headers: {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
   }
 });
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
@@ -9,12 +10,12 @@ const { getConfig } = require('./chzzkNotifier');
 
 const lastTweetMap = new Map();
 
-// 다중 RSSHub / Nitter 브릿지 서버 (접속 시도용)
+// 2026년 기준 봇/스크립트 RSS 피드 응답이 정상 작동하는 미러 서버 목록
 const FEED_MIRRORS = [
-  (user) => `https://rsshub.app/twitter/user/${user}`,
-  (user) => `https://nitter.poast.org/${user}/rss`,
-  (user) => `https://nitter.cz/${user}/rss`,
-  (user) => `https://nitter.privacydev.net/${user}/rss`
+  (user) => `https://nitter.kareem.one/${user}/rss`,
+  (user) => `https://nitter.meowing.monster/${user}/rss`,
+  (user) => `https://shitter.thepixora.com/${user}/rss`,
+  (user) => `https://rsshub.app/twitter/user/${user}`
 ];
 
 async function fetchTweetFeed(username) {
@@ -26,7 +27,7 @@ async function fetchTweetFeed(username) {
         return feed;
       }
     } catch (e) {
-      continue;
+      continue; // 차단되거나 중단된 미러는 우회하여 다음 미러 시도
     }
   }
   return null;
@@ -56,10 +57,10 @@ async function checkLatestTweet(username, discordChannel) {
     const spaceMatch = rawContent.match(/https?:\/\/(x|twitter)\.com\/i\/spaces\/[a-zA-Z0-9]+/i) ||
                        link.match(/https?:\/\/(x|twitter)\.com\/i\/spaces\/[a-zA-Z0-9]+/i);
 
-    const displayName = feed.title ? feed.title.replace(/ \/ Twitter| \/ X/, '').trim() : username;
+    const displayName = feed.title ? feed.title.replace(/ \/ Twitter| \/ X/g, '').trim() : username;
     const authorName = `${displayName} (@${username})`;
 
-    // 1. 트위터 스페이스 알림 처리
+    // 1. 트위터 스페이스 알림
     if (spaceMatch) {
       const spaceUrl = spaceMatch[0].replace('twitter.com', 'x.com');
 
@@ -86,7 +87,7 @@ async function checkLatestTweet(username, discordChannel) {
 
       await discordChannel.send({ embeds: [embed], components: [btn] });
     } 
-    // 2. 일반 트윗 알림 처리
+    // 2. 일반 트윗 알림
     else {
       let content = rawContent.replace(/<[^>]*>/g, '').trim() || '내용 없음';
 
@@ -112,7 +113,7 @@ async function checkLatestTweet(username, discordChannel) {
       await discordChannel.send({ embeds: [embed], components: [btn] });
     }
   } catch (error) {
-    console.log(`[Twitter Monitor] @${username} 트윗 업데이트 확인 중...`);
+    console.log(`[Twitter Monitor] @${username} 트윗 수신 확인 중...`);
   }
 }
 
@@ -134,7 +135,7 @@ async function startTwitterMonitoring(client) {
         console.error(`[Twitter Monitor Error] @${twitterId}:`, err.message);
       }
     }
-  }, 180000);
+  }, 180000); // 3분 주기
 }
 
 module.exports = { checkLatestTweet, startTwitterMonitoring };
