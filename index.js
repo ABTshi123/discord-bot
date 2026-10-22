@@ -148,3 +148,21 @@ client.on('interactionCreate', async interaction => {
 });
 
 client.login(process.env.DISCORD_TOKEN);
+// Render Web Service 결착용 가짜 웹서버 (포트 바인딩 에러 방지)
+const express = require('express');
+const app = express();
+app.get('/', (req, res) => res.send('Bot is Live!'));
+app.listen(process.env.PORT || 3000);
+const { checkLatestTweet } = require('./twitterNotifier');
+client.once('ready', () => {
+    console.log(`🤖 봇 로그인 완료: ${client.user.tag}`);
+
+    // 3분(180,000ms)마다 트위터 감지 실행
+    setInterval(async () => {
+        // 알림을 받을 디스코드 채널 ID를 입력하세요
+        const channel = client.channels.cache.get('여기에_알림받을_채널_ID'); 
+        if (channel) {
+            await checkLatestTweet('arahashi_tabi', channel); // 감지할 트위터 아이디
+        }
+    }, 180000); 
+});
