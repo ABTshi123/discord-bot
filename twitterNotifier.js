@@ -9,24 +9,24 @@ const { getConfig } = require('./chzzkNotifier');
 
 const lastTweetMap = new Map();
 
-// 사용할 작동 가능한 Nitter / RSS 브릿지 서버 목록 (다중 백업)
-const NITTER_INSTANCES = [
-  'https://nitter.poast.org',
-  'https://nitter.cz',
-  'https://nitter.privacydev.net'
+// 다중 RSSHub / Nitter 브릿지 서버 (접속 시도용)
+const FEED_MIRRORS = [
+  (user) => `https://rsshub.app/twitter/user/${user}`,
+  (user) => `https://nitter.poast.org/${user}/rss`,
+  (user) => `https://nitter.cz/${user}/rss`,
+  (user) => `https://nitter.privacydev.net/${user}/rss`
 ];
 
 async function fetchTweetFeed(username) {
-  for (const baseUrl of NITTER_INSTANCES) {
+  for (const getUrl of FEED_MIRRORS) {
     try {
-      const rssUrl = `${baseUrl}/${username}/rss`;
+      const rssUrl = getUrl(username);
       const feed = await parser.parseURL(rssUrl);
       if (feed && feed.items && feed.items.length > 0) {
         return feed;
       }
     } catch (e) {
-      // 해당 미러 서버가 막혔을 경우 다음 서버 시도
-      continue;
+      continue; // 접속 불가 시 다음 미러 시도
     }
   }
   return null;
@@ -73,7 +73,7 @@ async function checkLatestTweet(username, discordChannel) {
 
     await discordChannel.send({ embeds: [embed], components: [btn] });
   } catch (error) {
-    console.log(`[Twitter Monitor] @${username} 동기화 확인 중...`);
+    console.log(`[Twitter Monitor] @${username} 트윗 업데이트 확인 중...`);
   }
 }
 
@@ -95,7 +95,7 @@ async function startTwitterMonitoring(client) {
         console.error(`[Twitter Monitor Error] @${twitterId}:`, err.message);
       }
     }
-  }, 180000); // 3분 주기
+  }, 180000);
 }
 
 module.exports = { checkLatestTweet, startTwitterMonitoring };

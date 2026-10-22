@@ -1,13 +1,12 @@
 const fs = require('fs');
 const path = require('path');
-const { exec } = require('child_process');
+const https = require('https');
 const { ChzzkClient } = require('chzzk');
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 
 const chzzk = new ChzzkClient();
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 
-// 방송 상태 및 채팅 소켓 저장 메모리
 const lastLiveStatus = {};
 const activeChatSockets = {};
 
@@ -20,17 +19,82 @@ function getConfig() {
   }
 }
 
-function pushConfigToGithub() {
-  const commands = 'git add config.json && git commit -m "Auto-update config.json [skip ci]" && git push origin main';
-  exec(commands, (error) => {
-    if (error) console.log('[Config Sync Notice] GitHub 동기화 진행 중...');
-    else console.log('[Config Sync Success] config.json이 GitHub에 정상 동기화되었습니다.');
+// GitHub REST API를 이용해 config.json 원격 저장소 백업
+async function pushConfigToGithubAPI() {
+  const token = process.env.GITHUB_TOKEN;
+  if (!token) {
+    console.log('[Config Sync Warning] GITHUB_TOKEN이 .env에 등록되어 있지 않습니다.');
+    return;
+  }
+
+  const owner = 'ABTshi123';
+  const repo = 'discord-bot';
+  const filePath = 'config.json';
+  const content = fs.readFileSync(CONFIG_PATH, 'utf8');
+  const base64Content = Buffer.from(content).toString('base64');
+
+  // 1. 기존 파일의 SHA 값 가져오기
+  const optionsGet = {
+    hostname: 'api.github.com',
+    path: `/repos/${owner}/${repo}/contents/${filePath}`,
+    method: 'GET',
+    headers: {
+      'User-Agent': 'Discord-Bot',
+      'Authorization': `token ${token}`,
+      'Accept': 'application/vnd.github.v3+json'
+    }
+  };
+
+  const reqGet = https.request(optionsGet, (res) => {
+    let body = '';
+    res.on('data', chunk => body += chunk);
+    res.on('end', () => {
+      let sha = null;
+      try {
+        const json = JSON.parse(body);
+        if (json.sha) sha = json.sha;
+      } catch (e) {}
+
+      // 2. GitHub API로 파일 덮어쓰기 (Update File)
+      const postData = JSON.stringify({
+        message: 'Auto-update config.json via GitHub API [skip ci]',
+        content: base64Content,
+        sha: sha || undefined
+      });
+
+      const optionsPut = {
+        hostname: 'api.github.com',
+        path: `/repos/${owner}/${repo}/contents/${filePath}`,
+        method: 'PUT',
+        headers: {
+          'User-Agent': 'Discord-Bot',
+          'Authorization': `token ${token}`,
+          'Accept': 'application/vnd.github.v3+json',
+          'Content-Type': 'application/json'
+        }
+      };
+
+      const reqPut = https.request(optionsPut, (resPut) => {
+        if (resPut.statusCode === 200 || resPut.statusCode === 201) {
+          console.log('[Config Sync Success] GitHub API로 config.json 백업 완료!');
+        } else {
+          console.log(`[Config Sync Error] API 응답 코드: ${resPut.statusCode}`);
+        }
+      });
+
+      reqPut.on('error', (e) => console.error('[Config Sync Request Error]:', e.message));
+      reqPut.write(postData);
+      reqPut.end();
+    });
   });
+
+  reqGet.on('error', (e) => console.error('[Config Sync SHA Fetch Error]:', e.message));
+  reqGet.end();
 }
 
 function saveConfig(data) {
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(data, null, 2), 'utf8');
-  pushConfigToGithub();
+  pushConfigToGithubAPI();
 }
 
 async function fetchLiveDetail(channelId) {
@@ -44,7 +108,6 @@ async function fetchLiveDetail(channelId) {
   return null;
 }
 
-// 스크린샷 디자인과 동일한 링크 버튼 생성 함수
 function createLinkButton(url) {
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder()
@@ -54,7 +117,6 @@ function createLinkButton(url) {
   );
 }
 
-// 스트리머 라이브 채팅 실시간 연결 및 감지
 async function connectStreamerChat(channelId, discordChannel, streamerName) {
   if (activeChatSockets[channelId]) return;
 
@@ -62,20 +124,14 @@ async function connectStreamerChat(channelId, discordChannel, streamerName) {
     const chat = chzzk.chat({ channelId });
     activeChatSockets[channelId] = chat;
 
-    chat.on('connect', () => {
-      console.log(`[Chzzk Chat Connected] ${streamerName} 채팅 감지 시작`);
-    });
-
     chat.on('chat', async (msg) => {
-      // 스트리머 본인이 작성한 채팅만 골라냄 (채널 소유자 확인)
       if (msg.profile && msg.profile.isOwner) {
         const liveUrl = `https://chzzk.naver.com/live/${channelId}`;
         const profileImage = msg.profile.profileImageUrl || 'https://nng-phinf.pstatic.net/Chzzk_Logo.png';
         const chatMsg = msg.hidden ? '숨겨진 메시지입니다.' : msg.msg;
 
-        // 스크린샷 예시와 100% 동일한 파란색 테두리 임베드 디자인 생성
         const embed = new EmbedBuilder()
-          .setColor(0x4287f5) // 파란색 테두리
+          .setColor(0x4287f5)
           .setAuthor({ name: streamerName, iconURL: profileImage })
           .setTitle(`${streamerName}님이 채팅을 남겼어요.`)
           .setDescription(chatMsg)
@@ -94,7 +150,6 @@ async function connectStreamerChat(channelId, discordChannel, streamerName) {
   }
 }
 
-// 소켓 연결 해제
 function disconnectStreamerChat(channelId) {
   if (activeChatSockets[channelId]) {
     try {
@@ -131,7 +186,6 @@ async function startChzzkMonitoring(client) {
         const discordChannel = await client.channels.fetch(target.channelId).catch(() => null);
 
         if (discordChannel) {
-          // 1. 방송 시작 알림
           if (isLive && !wasLive) {
             const embed = new EmbedBuilder()
               .setColor(0x4287f5)
@@ -147,7 +201,6 @@ async function startChzzkMonitoring(client) {
             });
             connectStreamerChat(channelId, discordChannel, streamerName);
           }
-          // 2. 방송 설정을 변경함 (방제/카테고리)
           else if (isLive && wasLive && (prevTitle !== liveTitle || prevCategory !== category)) {
             const embed = new EmbedBuilder()
               .setColor(0x4287f5)
@@ -162,11 +215,9 @@ async function startChzzkMonitoring(client) {
               components: [createLinkButton(liveUrl)]
             });
           }
-          // 3. 이미 방송 중인 경우 채팅 감지 연결 유지
           else if (isLive) {
             connectStreamerChat(channelId, discordChannel, streamerName);
           }
-          // 4. 방송 종료 시 채팅 감지 해제
           else if (!isLive && wasLive) {
             disconnectStreamerChat(channelId);
           }
