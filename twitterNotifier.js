@@ -1,29 +1,47 @@
 const Parser = require('rss-parser');
-const parser = new Parser();
-const { EmbedBuilder } = require('discord.js');
+const parser = new Parser({
+  headers: {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+  }
+});
+const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { getConfig } = require('./chzzkNotifier');
 
-// 마지막으로 확인한 트윗 ID 저장용
 const lastTweetMap = new Map();
 
-/**
- * 무료 RSS 피드를 통해 최신 트윗 감지
- */
+// 사용할 작동 가능한 Nitter / RSS 브릿지 서버 목록 (다중 백업)
+const NITTER_INSTANCES = [
+  'https://nitter.poast.org',
+  'https://nitter.cz',
+  'https://nitter.privacydev.net'
+];
+
+async function fetchTweetFeed(username) {
+  for (const baseUrl of NITTER_INSTANCES) {
+    try {
+      const rssUrl = `${baseUrl}/${username}/rss`;
+      const feed = await parser.parseURL(rssUrl);
+      if (feed && feed.items && feed.items.length > 0) {
+        return feed;
+      }
+    } catch (e) {
+      // 해당 미러 서버가 막혔을 경우 다음 서버 시도
+      continue;
+    }
+  }
+  return null;
+}
+
 async function checkLatestTweet(username, discordChannel) {
   try {
-    // 안정적인 대체 Nitter 피드 주소 사용
-    const rssUrl = `https://nitter.privacydev.net/${username}/rss`;
-    const feed = await parser.parseURL(rssUrl);
-
-    if (!feed.items || feed.items.length === 0) return;
+    const feed = await fetchTweetFeed(username);
+    if (!feed || !feed.items || feed.items.length === 0) return;
 
     const latestTweet = feed.items[0];
     const tweetId = latestTweet.guid || latestTweet.link;
 
-    // 이미 알림을 보낸 트윗이면 건너뜀
     if (lastTweetMap.get(username) === tweetId) return;
 
-    // 처음 켜졌을 때는 기준점만 잡고 메시지 전송은 중복 방지를 위해 패스
     if (!lastTweetMap.has(username)) {
       lastTweetMap.set(username, tweetId);
       return;
@@ -31,26 +49,34 @@ async function checkLatestTweet(username, discordChannel) {
 
     lastTweetMap.set(username, tweetId);
 
-    // 파란색 트위터 스타일 임베드 카드 생성
+    let content = latestTweet.contentSnippet || latestTweet.content || '내용 없음';
+    content = content.replace(/<[^>]*>/g, '').trim();
+
     const embed = new EmbedBuilder()
       .setColor('#1DA1F2')
-      .setAuthor({ name: `@${username} 님의 새로운 트윗`, iconURL: 'https://abs.twimg.com/icons/apple-touch-icon-192x192.png' })
+      .setAuthor({
+        name: `@${username} 님의 새로운 트윗`,
+        iconURL: 'https://abs.twimg.com/icons/apple-touch-icon-192x192.png'
+      })
       .setTitle(latestTweet.title ? latestTweet.title.substring(0, 256) : '새 트윗이 등록되었습니다.')
       .setURL(latestTweet.link)
-      .setDescription(latestTweet.contentSnippet || latestTweet.content || '내용 없음')
+      .setDescription(content)
       .setTimestamp(new Date(latestTweet.pubDate || Date.now()))
       .setFooter({ text: 'Twitter (X) 알림' });
 
-    await discordChannel.send({ embeds: [embed] });
+    const btn = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setLabel('트윗 보러가기')
+        .setURL(latestTweet.link)
+        .setStyle(ButtonStyle.Link)
+    );
+
+    await discordChannel.send({ embeds: [embed], components: [btn] });
   } catch (error) {
-    // Nitter 서버 접속 불가 시 로그만 남기고 봇 다운 방지
-    console.log(`[Twitter Monitor Notice] @${username} 트윗 조회 중...`);
+    console.log(`[Twitter Monitor] @${username} 동기화 확인 중...`);
   }
 }
 
-/**
- * 등록된 트위터 목록을 3분마다 순회 감지
- */
 async function startTwitterMonitoring(client) {
   setInterval(async () => {
     const config = getConfig();
@@ -69,7 +95,7 @@ async function startTwitterMonitoring(client) {
         console.error(`[Twitter Monitor Error] @${twitterId}:`, err.message);
       }
     }
-  }, 180000); // 3분 간격
+  }, 180000); // 3분 주기
 }
 
 module.exports = { checkLatestTweet, startTwitterMonitoring };
