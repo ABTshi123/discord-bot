@@ -93,7 +93,7 @@ async function fetchLiveDetail(channelId) {
   return null;
 }
 
-// 스트리머 채널 이름 가져오기 함수
+// 스트리머 채널 이름 가져오기
 async function getChannelName(channelId) {
   try {
     const liveDetail = await fetchLiveDetail(channelId);
@@ -109,7 +109,7 @@ async function getChannelName(channelId) {
       if (channelInfo && channelInfo.channelName) return channelInfo.channelName;
     }
   } catch (e) {}
-  return '스트리머';
+  return null; // 이름 조회 실패시 null 반환하여 저장된 기존 이름 활용
 }
 
 function createLinkButton(url) {
@@ -121,7 +121,7 @@ function createLinkButton(url) {
   );
 }
 
-// 라이브 채팅 연결 및 본인/타 채널 출몰 감지 로직
+// 라이브 채팅 연결 및 타 채널 출몰 감지 로직
 async function connectStreamerChat(targetChannelId, hostStreamerName, client) {
   if (activeChatSockets[targetChannelId]) return;
 
@@ -217,20 +217,38 @@ async function startChzzkMonitoring(client) {
         if (!liveDetail) continue;
 
         const isLive = liveDetail.status === 'OPEN';
-        const wasLive = lastLiveStatus[channelId]?.isLive || false;
-        const prevTitle = lastLiveStatus[channelId]?.title;
-        const prevCategory = lastLiveStatus[channelId]?.category;
+        
+        // 스트리머 이름 우선순위 처리 (API liveDetail > config 저장 이름 > 기본값)
+        const streamerName = liveDetail.channel?.channelName || target.name || '알 수 없는 스트리머';
+        
+        // config에 이름이 제대로 업데이트되어 있지 않다면 보완 저장
+        if (!target.name || target.name === '스트리머') {
+          config.chzzk[channelId].name = streamerName;
+          saveConfig(config);
+        }
 
         const liveTitle = liveDetail.liveTitle || '제목 없음';
-        const streamerName = target.name || liveDetail.channel?.channelName || '스트리머';
         const category = liveDetail.liveCategoryValue || '카테고리 없음';
         const liveUrl = `https://chzzk.naver.com/live/${channelId}`;
         const profileImageUrl = liveDetail.channel?.channelImageUrl || 'https://nng-phinf.pstatic.net/Chzzk_Logo.png';
 
         const discordChannel = await client.channels.fetch(target.channelId).catch(() => null);
 
+        // 💡 핵심: 처음 등록/실행되어 상태 기억(lastLiveStatus)이 없는 경우 감지 기준점만 세우고 알림 스킵
+        if (!lastLiveStatus[channelId]) {
+          lastLiveStatus[channelId] = { isLive, title: liveTitle, category };
+          if (isLive && discordChannel) {
+            connectStreamerChat(channelId, streamerName, client);
+          }
+          continue;
+        }
+
+        const wasLive = lastLiveStatus[channelId].isLive;
+        const prevTitle = lastLiveStatus[channelId].title;
+        const prevCategory = lastLiveStatus[channelId].category;
+
         if (discordChannel) {
-          // 1. 방송 시작 알림 (뱅온)
+          // 1. 방송 시작 알림 (실제 OFF -> ON일 때만 전송)
           if (isLive && !wasLive) {
             const embed = new EmbedBuilder()
               .setColor(0x4287f5)
@@ -261,7 +279,7 @@ async function startChzzkMonitoring(client) {
               components: [createLinkButton(liveUrl)]
             });
           }
-          // 3. 방송 중 소켓 연결 유지
+          // 3. 방송 중 연결 유지
           else if (isLive) {
             connectStreamerChat(channelId, streamerName, client);
           }
