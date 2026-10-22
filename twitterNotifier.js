@@ -1,18 +1,19 @@
 const Parser = require('rss-parser');
-const parser = new Parser();
-const { EmbedBuilder } = require('discord.js');
+const parser = new Parser({
+  customFields: {
+    item: [['media:content', 'mediaContent'], ['enclosure', 'enclosure']]
+  }
+});
+const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 
-// 마지막으로 확인한 트윗 ID 저장용
 const lastTweetMap = new Map();
 
 /**
- * 트위터 RSS 피드를 감지하여 새 트윗을 디스코드 채널로 전송
- * @param {string} username - 트위터 사용자 아이디 (예: 'arahashi_tabi')
- * @param {object} discordChannel - 알림을 보낼 디스코드 채널 객체
+ * 트위터 RSS 피드를 감지하여 이미지 예쁜 임베드 카드로 디스코드에 전송
  */
 async function checkLatestTweet(username, discordChannel) {
   try {
-    // 무료 트위터 RSS 브릿지 URL (Nitter 계열)
+    // Nitter RSS 브릿지 사용
     const rssUrl = `https://nitter.net/${username}/rss`;
     const feed = await parser.parseURL(rssUrl);
 
@@ -21,10 +22,9 @@ async function checkLatestTweet(username, discordChannel) {
     const latestTweet = feed.items[0];
     const tweetId = latestTweet.guid || latestTweet.link;
 
-    // 이전에 이미 보낸 트윗이면 건너뜀
+    // 감지 처리
     if (lastTweetMap.get(username) === tweetId) return;
 
-    // 처음 켜졌을 때는 기준점만 잡고 메시지 전송은 패스
     if (!lastTweetMap.has(username)) {
       lastTweetMap.set(username, tweetId);
       return;
@@ -32,20 +32,49 @@ async function checkLatestTweet(username, discordChannel) {
 
     lastTweetMap.set(username, tweetId);
 
-    // 디스코드 하늘색/파란색 트위터 임베드 카드 작성
-    const embed = new EmbedBuilder()
-      .setColor('#1DA1F2')
-      .setAuthor({ name: `@${username} 님의 새로운 트윗`, iconURL: 'https://abs.twimg.com/icons/apple-touch-icon-192x192.png' })
-      .setTitle(latestTweet.title ? latestTweet.title.substring(0, 256) : '새 트윗이 등록되었습니다.')
-      .setURL(latestTweet.link)
-      .setDescription(latestTweet.contentSnippet || latestTweet.content || '내용 없음')
-      .setTimestamp(new Date(latestTweet.pubDate))
-      .setFooter({ text: 'Twitter (X) 알림' });
+    // 본문 텍스트 정리 (HTML 태그 제거)
+    let content = latestTweet.contentSnippet || latestTweet.content || '내용 없음';
+    content = content.replace(/<[^>]*>/g, '').trim();
 
-    await discordChannel.send({ embeds: [embed] });
+    // 이미지 URL 추출 (RSS 내 미디어 항목 감지)
+    let imageUrl = null;
+    if (latestTweet.mediaContent && latestTweet.mediaContent.$&& latestTweet.mediaContent.$.url) {
+      imageUrl = latestTweet.mediaContent.$.url;
+    } else if (latestTweet.enclosure && latestTweet.enclosure.url) {
+      imageUrl = latestTweet.enclosure.url;
+    }
+
+    // 디스코드 파란색 트위터 스타일 임베드 구축
+    const embed = new EmbedBuilder()
+      .setColor('#1DA1F2') // 트위터 파란색
+      .setAuthor({
+        name: `${feed.title || username} (@${username})`,
+        iconURL: 'https://abs.twimg.com/icons/apple-touch-icon-192x192.png'
+      })
+      .setDescription(content)
+      .setFooter({
+        text: 'Twitter',
+        iconURL: 'https://abs.twimg.com/icons/apple-touch-icon-192x192.png'
+      })
+      .setTimestamp(new Date(latestTweet.pubDate || Date.now()));
+
+    // 트윗에 이미지가 첨부되어 있으면 임베드 이미지로 추가
+    if (imageUrl) {
+      embed.setImage(imageUrl);
+    }
+
+    // 이미지 하단의 [링크 🔗] 이동 버튼 생성
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setLabel('링크')
+        .setStyle(ButtonStyle.Link)
+        .setURL(latestTweet.link)
+    );
+
+    // 디스코드 채널로 메시지 전송
+    await discordChannel.send({ embeds: [embed], components: [row] });
   } catch (error) {
-    // Nitter 인스턴스 일시적 접속 불가시 무시하도록 처리
-    console.log(`[Twitter Monitor Notice] @${username} 트윗 조회 중...`);
+    console.log(`[Twitter Monitor] @${username} 트윗 업데이트 확인 중...`);
   }
 }
 
