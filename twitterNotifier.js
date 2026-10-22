@@ -1,19 +1,16 @@
 const Parser = require('rss-parser');
-const parser = new Parser({
-  customFields: {
-    item: [['media:content', 'mediaContent'], ['enclosure', 'enclosure']]
-  }
-});
-const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const parser = new Parser();
+const { EmbedBuilder } = require('discord.js');
+const { getConfig } = require('./chzzkNotifier');
 
+// 마지막으로 확인한 트윗 ID 저장용
 const lastTweetMap = new Map();
 
 /**
- * 트위터 RSS 피드를 감지하여 이미지 예쁜 임베드 카드로 디스코드에 전송
+ * 무료 RSS 피드를 통해 최신 트윗 감지
  */
 async function checkLatestTweet(username, discordChannel) {
   try {
-    // Nitter RSS 브릿지 사용
     const rssUrl = `https://nitter.net/${username}/rss`;
     const feed = await parser.parseURL(rssUrl);
 
@@ -22,9 +19,10 @@ async function checkLatestTweet(username, discordChannel) {
     const latestTweet = feed.items[0];
     const tweetId = latestTweet.guid || latestTweet.link;
 
-    // 감지 처리
+    // 이미 알림을 보낸 트윗이면 건너뜀
     if (lastTweetMap.get(username) === tweetId) return;
 
+    // 처음 켜졌을 때는 기준점만 잡고 메시지 전송은 중복 방지를 위해 패스
     if (!lastTweetMap.has(username)) {
       lastTweetMap.set(username, tweetId);
       return;
@@ -32,50 +30,45 @@ async function checkLatestTweet(username, discordChannel) {
 
     lastTweetMap.set(username, tweetId);
 
-    // 본문 텍스트 정리 (HTML 태그 제거)
-    let content = latestTweet.contentSnippet || latestTweet.content || '내용 없음';
-    content = content.replace(/<[^>]*>/g, '').trim();
-
-    // 이미지 URL 추출 (RSS 내 미디어 항목 감지)
-    let imageUrl = null;
-    if (latestTweet.mediaContent && latestTweet.mediaContent.$&& latestTweet.mediaContent.$.url) {
-      imageUrl = latestTweet.mediaContent.$.url;
-    } else if (latestTweet.enclosure && latestTweet.enclosure.url) {
-      imageUrl = latestTweet.enclosure.url;
-    }
-
-    // 디스코드 파란색 트위터 스타일 임베드 구축
+    // 파란색 트위터 스타일 임베드 카드 생성
     const embed = new EmbedBuilder()
-      .setColor('#1DA1F2') // 트위터 파란색
-      .setAuthor({
-        name: `${feed.title || username} (@${username})`,
-        iconURL: 'https://abs.twimg.com/icons/apple-touch-icon-192x192.png'
-      })
-      .setDescription(content)
-      .setFooter({
-        text: 'Twitter',
-        iconURL: 'https://abs.twimg.com/icons/apple-touch-icon-192x192.png'
-      })
-      .setTimestamp(new Date(latestTweet.pubDate || Date.now()));
+      .setColor('#1DA1F2')
+      .setAuthor({ name: `@${username} 님의 새로운 트윗`, iconURL: 'https://abs.twimg.com/icons/apple-touch-icon-192x192.png' })
+      .setTitle(latestTweet.title ? latestTweet.title.substring(0, 256) : '새 트윗이 등록되었습니다.')
+      .setURL(latestTweet.link)
+      .setDescription(latestTweet.contentSnippet || latestTweet.content || '내용 없음')
+      .setTimestamp(new Date(latestTweet.pubDate))
+      .setFooter({ text: 'Twitter (X) 알림' });
 
-    // 트윗에 이미지가 첨부되어 있으면 임베드 이미지로 추가
-    if (imageUrl) {
-      embed.setImage(imageUrl);
-    }
-
-    // 이미지 하단의 [링크 🔗] 이동 버튼 생성
-    const row = new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setLabel('링크')
-        .setStyle(ButtonStyle.Link)
-        .setURL(latestTweet.link)
-    );
-
-    // 디스코드 채널로 메시지 전송
-    await discordChannel.send({ embeds: [embed], components: [row] });
+    await discordChannel.send({ embeds: [embed] });
   } catch (error) {
-    console.log(`[Twitter Monitor] @${username} 트윗 업데이트 확인 중...`);
+    // Nitter 서버 접속 불가 시 에러로 봇이 꺼지지 않도록 처리
+    console.log(`[Twitter Monitor Notice] @${username} 트윗 조회 중...`);
   }
 }
 
-module.exports = { checkLatestTweet };
+/**
+ * 등록된 트위터 목록을 3분마다 순회 감지
+ */
+async function startTwitterMonitoring(client) {
+  setInterval(async () => {
+    const config = getConfig();
+    if (!config.twitter) return;
+
+    for (const twitterId in config.twitter) {
+      const target = config.twitter[twitterId];
+      if (!target.channelId) continue;
+
+      try {
+        const discordChannel = await client.channels.fetch(target.channelId).catch(() => null);
+        if (discordChannel) {
+          await checkLatestTweet(twitterId, discordChannel);
+        }
+      } catch (err) {
+        console.error(`[Twitter Monitor Error] @${twitterId}:`, err.message);
+      }
+    }
+  }, 180000); // 3분 간격
+}
+
+module.exports = { checkLatestTweet, startTwitterMonitoring };
