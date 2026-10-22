@@ -6,10 +6,16 @@ const { startYoutubeMonitoring, getYoutubeChannelInfo } = require('./youtubeNoti
 const { startTwitterMonitoring } = require('./twitterNotifier');
 
 // 1. Render 웹서버 24시간 가동 포트 바인딩
+// 1. Render Web Service 및 업타임로봇 응답용 Express 웹서버
 const app = express();
-app.get('/', (req, res) => res.send('Bot is Live!'));
+
+// 업타임로봇의 GET, HEAD 및 Health Check 요청에 모두 200 OK 응답
+app.get('/', (req, res) => res.status(200).send('Bot is Live!'));
+app.head('/', (req, res) => res.status(200).end());
+app.get('/health', (req, res) => res.status(200).send('OK'));
+
 app.listen(process.env.PORT || 3000, () => {
-  console.log('🌐 Express Web Server is running');
+  console.log('🌐 Express Web Server is running on port ' + (process.env.PORT || 3000));
 });
 
 // 2. 디스코드 클라이언트 생성
