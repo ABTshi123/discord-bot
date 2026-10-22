@@ -68,7 +68,7 @@ async function pushConfigToGithubAPI() {
         }
       };
 
-      const reqPut = https.request(optionsPut, (resPut) => {});
+      const reqPut = https.request(optionsPut, () => {});
       reqPut.on('error', () => {});
       reqPut.write(postData);
       reqPut.end();
@@ -93,6 +93,25 @@ async function fetchLiveDetail(channelId) {
   return null;
 }
 
+// 스트리머 채널 이름 가져오기 함수
+async function getChannelName(channelId) {
+  try {
+    const liveDetail = await fetchLiveDetail(channelId);
+    if (liveDetail && liveDetail.channel && liveDetail.channel.channelName) {
+      return liveDetail.channel.channelName;
+    }
+    if (typeof chzzk.channel?.get === 'function') {
+      const channelInfo = await chzzk.channel.get(channelId);
+      if (channelInfo && channelInfo.channelName) return channelInfo.channelName;
+    }
+    if (typeof chzzk.channel?.detail === 'function') {
+      const channelInfo = await chzzk.channel.detail(channelId);
+      if (channelInfo && channelInfo.channelName) return channelInfo.channelName;
+    }
+  } catch (e) {}
+  return '스트리머';
+}
+
 function createLinkButton(url) {
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder()
@@ -102,7 +121,7 @@ function createLinkButton(url) {
   );
 }
 
-// 라이브 채팅 실시간 연결 및 타 채널 감지 로직
+// 라이브 채팅 연결 및 본인/타 채널 출몰 감지 로직
 async function connectStreamerChat(targetChannelId, hostStreamerName, client) {
   if (activeChatSockets[targetChannelId]) return;
 
@@ -121,7 +140,7 @@ async function connectStreamerChat(targetChannelId, hostStreamerName, client) {
       const liveUrl = `https://chzzk.naver.com/live/${targetChannelId}`;
       const profileImage = msg.profile.profileImageUrl || 'https://nng-phinf.pstatic.net/Chzzk_Logo.png';
 
-      // 1. 본인 방송 채널에서 방장이 채팅을 친 경우
+      // 1. 방장이 자기 채널 채팅창에 남긴 경우
       if (msg.profile.isOwner) {
         const myConfig = config.chzzk[targetChannelId];
         if (myConfig && myConfig.channelId) {
@@ -141,10 +160,9 @@ async function connectStreamerChat(targetChannelId, hostStreamerName, client) {
           }
         }
       } 
-      // 2. 다른 스트리머(등록된 대상들) 방송 채팅창에 출몰하여 메시지를 남긴 경우
+      // 2. 다른 등록된 스트리머 채널에 출몰하여 메시지를 남긴 경우
       else {
         for (const streamerChannelId in config.chzzk) {
-          // 채팅 작성자가 등록된 타 스트리머(자신의 채널이 아닌 곳에 출몰)일 때
           if (streamerChannelId !== targetChannelId && streamerChannelId === senderUserIdHash) {
             const registeredTarget = config.chzzk[streamerChannelId];
             if (!registeredTarget || !registeredTarget.channelId) continue;
@@ -153,7 +171,6 @@ async function connectStreamerChat(targetChannelId, hostStreamerName, client) {
             if (discordChannel) {
               const visitorName = msg.profile.nickname || registeredTarget.name || '스트리머';
 
-              // 스크린샷과 100% 동일한 양식으로 발송
               const embed = new EmbedBuilder()
                 .setColor(0x4287f5)
                 .setAuthor({ name: visitorName, iconURL: profileImage })
@@ -213,6 +230,7 @@ async function startChzzkMonitoring(client) {
         const discordChannel = await client.channels.fetch(target.channelId).catch(() => null);
 
         if (discordChannel) {
+          // 1. 방송 시작 알림 (뱅온)
           if (isLive && !wasLive) {
             const embed = new EmbedBuilder()
               .setColor(0x4287f5)
@@ -228,6 +246,7 @@ async function startChzzkMonitoring(client) {
             });
             connectStreamerChat(channelId, streamerName, client);
           }
+          // 2. 방송 설정을 변경함 (방제/카테고리 변경)
           else if (isLive && wasLive && (prevTitle !== liveTitle || prevCategory !== category)) {
             const embed = new EmbedBuilder()
               .setColor(0x4287f5)
@@ -242,9 +261,11 @@ async function startChzzkMonitoring(client) {
               components: [createLinkButton(liveUrl)]
             });
           }
+          // 3. 방송 중 소켓 연결 유지
           else if (isLive) {
             connectStreamerChat(channelId, streamerName, client);
           }
+          // 4. 방송 종료 시 소켓 해제
           else if (!isLive && wasLive) {
             disconnectStreamerChat(channelId);
           }
@@ -259,4 +280,4 @@ async function startChzzkMonitoring(client) {
   }, 60000);
 }
 
-module.exports = { startChzzkMonitoring, getConfig, saveConfig };
+module.exports = { startChzzkMonitoring, getConfig, saveConfig, getChannelName };
