@@ -1,21 +1,17 @@
 {
-  "name": "tabi-discordbot",
+  "name": "discord-bot",
   "version": "1.0.0",
-  "description": "",
+  "description": "Discord Bot for Chzzk, YouTube, and Twitter notifications",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node index.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "commonjs",
   "dependencies": {
-    "chzzk": "^1.10.4",
-    "discord.js": "^14.27.0",
-    "dotenv": "^18.0.8",
-    "googleapis": "^187.0.0",
-    "rss-parser": "^3.13.0",
-    "twitter-api-v2": "^1.29.1"
+    "chzzk": "^0.3.0",
+    "discord.js": "^14.14.1",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "googleapis": "^134.0.0",
+    "rss-parser": "^3.13.0"
   }
 }
