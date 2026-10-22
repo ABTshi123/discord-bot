@@ -11,7 +11,8 @@ const lastTweetMap = new Map();
  */
 async function checkLatestTweet(username, discordChannel) {
   try {
-    const rssUrl = `https://nitter.net/${username}/rss`;
+    // 안정적인 대체 Nitter 피드 주소 사용
+    const rssUrl = `https://nitter.privacydev.net/${username}/rss`;
     const feed = await parser.parseURL(rssUrl);
 
     if (!feed.items || feed.items.length === 0) return;
@@ -37,12 +38,12 @@ async function checkLatestTweet(username, discordChannel) {
       .setTitle(latestTweet.title ? latestTweet.title.substring(0, 256) : '새 트윗이 등록되었습니다.')
       .setURL(latestTweet.link)
       .setDescription(latestTweet.contentSnippet || latestTweet.content || '내용 없음')
-      .setTimestamp(new Date(latestTweet.pubDate))
+      .setTimestamp(new Date(latestTweet.pubDate || Date.now()))
       .setFooter({ text: 'Twitter (X) 알림' });
 
     await discordChannel.send({ embeds: [embed] });
   } catch (error) {
-    // Nitter 서버 접속 불가 시 에러로 봇이 꺼지지 않도록 처리
+    // Nitter 서버 접속 불가 시 로그만 남기고 봇 다운 방지
     console.log(`[Twitter Monitor Notice] @${username} 트윗 조회 중...`);
   }
 }
