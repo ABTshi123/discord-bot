@@ -7,7 +7,7 @@
     "start": "node index.js"
   },
   "dependencies": {
-    "chzzk": "^0.3.0",
+    "chzzk": "latest",
     "discord.js": "^14.14.1",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
