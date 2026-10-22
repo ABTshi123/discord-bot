@@ -1,8 +1,18 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const express = require('express');
+const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const { startChzzkMonitoring, getConfig, saveConfig, getChannelName } = require('./chzzkNotifier');
 const { startYoutubeMonitoring, getYoutubeChannelInfo } = require('./youtubeNotifier');
+const { startTwitterMonitoring } = require('./twitterNotifier');
 
+// 1. Render Web Service 24시간 가동을 위한 Express 웹서버 (포트 바인딩 에러 방지)
+const app = express();
+app.get('/', (req, res) => res.send('Bot is Live!'));
+app.listen(process.env.PORT || 3000, () => {
+  console.log('🌐 Express Web Server is running');
+});
+
+// 2. 디스코드 클라이언트 생성
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -11,7 +21,7 @@ const client = new Client({
   ],
 });
 
-// 슬래시 커맨드 정의
+// 3. 디스코드 슬래시 커맨드 정의 (/치지직, /유튜브, /트위터)
 const commands = [
   // --- 치지직 커맨드 ---
   new SlashCommandBuilder()
@@ -44,8 +54,25 @@ const commands = [
     .setName('유튜브삭제')
     .setDescription('등록된 유튜브 알림 채널을 삭제합니다.')
     .addStringOption(opt => opt.setName('유튜브id').setDescription('삭제할 유튜브 channel ID').setRequired(true)),
+
+  // --- 트위터 커맨드 ---
+  new SlashCommandBuilder()
+    .setName('트위터등록')
+    .setDescription('트위터(X) 알림을 설정합니다.')
+    .addStringOption(opt => opt.setName('트위터id').setDescription('트위터 사용자 아이디 (예: arahashi_tabi)').setRequired(true))
+    .addChannelOption(opt => opt.setName('알림채널').setDescription('알림을 전송할 디스코드 채널').setRequired(true)),
+
+  new SlashCommandBuilder()
+    .setName('트위터목록')
+    .setDescription('현재 등록된 트위터 알림 목록을 조회합니다.'),
+
+  new SlashCommandBuilder()
+    .setName('트위터삭제')
+    .setDescription('등록된 트위터 알림을 삭제합니다.')
+    .addStringOption(opt => opt.setName('트위터id').setDescription('삭제할 트위터 아이디').setRequired(true)),
 ].map(cmd => cmd.toJSON());
 
+// 4. 봇 로그인 및 모니터링 시작
 client.once('ready', async () => {
   console.log(`🤖 봇이 성공적으로 로그인되었습니다: ${client.user.tag}`);
 
@@ -61,12 +88,13 @@ client.once('ready', async () => {
     console.error('커맨드 등록 실패:', err);
   }
 
-  // 모니터링 모듈 시작
+  // 치지직, 유튜브, 트위터 모니터링 시작
   startChzzkMonitoring(client);
   startYoutubeMonitoring(client);
+  startTwitterMonitoring(client);
 });
 
-// 명령어 수신 처리
+// 5. 슬래시 커맨드 응답 처리
 client.on('interactionCreate', async interaction => {
   if (!interaction.isChatInputCommand()) return;
 
@@ -145,24 +173,39 @@ client.on('interactionCreate', async interaction => {
     saveConfig(config);
     await interaction.reply({ content: `❌ **${channelName}** (\`${ytId}\`) 유튜브 채널 알림이 삭제되었습니다.`, ephemeral: true });
   }
+
+  // --- 트위터 명령어 ---
+  else if (commandName === '트위터등록') {
+    const twId = interaction.options.getString('트위터id');
+    const targetChannel = interaction.options.getChannel('알림채널');
+
+    if (!config.twitter) config.twitter = {};
+    config.twitter[twId] = { channelId: targetChannel.id };
+    saveConfig(config);
+
+    await interaction.reply({ content: `✅ 트위터 **@${twId}** 알림이 <#${targetChannel.id}> 채널로 등록되었습니다!`, ephemeral: true });
+  } 
+  else if (commandName === '트위터목록') {
+    if (!config.twitter || Object.keys(config.twitter).length === 0) {
+      return await interaction.reply({ content: '📋 현재 등록된 트위터 알림 채널이 없습니다.', ephemeral: true });
+    }
+    let listText = '';
+    for (const twId in config.twitter) {
+      const item = config.twitter[twId];
+      listText += `• **트위터**: **@${twId}** ➡️ **알림 채널**: <#${item.channelId}>\n`;
+    }
+    const embed = new EmbedBuilder().setColor(0x1DA1F2).setTitle('📋 등록된 트위터 알림 목록').setDescription(listText);
+    await interaction.reply({ embeds: [embed], ephemeral: true });
+  } 
+  else if (commandName === '트위터삭제') {
+    const twId = interaction.options.getString('트위터id');
+    if (!config.twitter || !config.twitter[twId]) {
+      return await interaction.reply({ content: `❌ 등록되지 않은 트위터 ID입니다: \`@${twId}\``, ephemeral: true });
+    }
+    delete config.twitter[twId];
+    saveConfig(config);
+    await interaction.reply({ content: `❌ **@${twId}** 트위터 알림이 삭제되었습니다.`, ephemeral: true });
+  }
 });
 
 client.login(process.env.DISCORD_TOKEN);
-// Render Web Service 결착용 가짜 웹서버 (포트 바인딩 에러 방지)
-const express = require('express');
-const app = express();
-app.get('/', (req, res) => res.send('Bot is Live!'));
-app.listen(process.env.PORT || 3000);
-const { checkLatestTweet } = require('./twitterNotifier');
-client.once('ready', () => {
-    console.log(`🤖 봇 로그인 완료: ${client.user.tag}`);
-
-    // 3분(180,000ms)마다 트위터 감지 실행
-    setInterval(async () => {
-        // 알림을 받을 디스코드 채널 ID를 입력하세요
-        const channel = client.channels.cache.get('여기에_알림받을_채널_ID'); 
-        if (channel) {
-            await checkLatestTweet('arahashi_tabi', channel); // 감지할 트위터 아이디
-        }
-    }, 180000); 
-});
