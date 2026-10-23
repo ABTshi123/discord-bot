@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { google } = require('googleapis');
-const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { EmbedBuilder } = require('discord.js');
 
 const youtube = google.youtube({
   version: 'v3',
@@ -45,7 +45,7 @@ async function getYoutubeChannelInfo(channelId) {
   return { title: '유튜브 채널', icon: '' };
 }
 
-// 유튜브 최신 영상/라이브 검사 함수
+// 유튜브 최신 영상 검사 및 디스코드 메시지 전송
 async function startYoutubeMonitoring(client) {
   setInterval(async () => {
     const config = getConfig();
@@ -71,27 +71,34 @@ async function startYoutubeMonitoring(client) {
 
         const videoTitle = latestItem.snippet.title;
         const channelTitle = latestItem.snippet.channelTitle;
-        const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
+        
+        // 쇼츠(Shorts) 또는 일반 영상 URL 구분
+        // search API 특성상 기본 watch URL로 연결하되, 쇼츠 단어가 포함되면 쇼츠 형태로 구성
+        const isShorts = videoTitle.toLowerCase().includes('#shorts') || videoTitle.toLowerCase().includes('#short');
+        const videoUrl = isShorts 
+          ? `https://www.youtube.com/shorts/${videoId}` 
+          : `https://www.youtube.com/watch?v=${videoId}`;
 
         const prevVideoId = lastVideoState[channelId];
 
-        // 새로운 영상 감지 시 알림 전송
+        // 새로운 영상 감지 시 알림
         if (prevVideoId && prevVideoId !== videoId) {
           const discordChannel = await client.channels.fetch(target.channelId).catch(() => null);
           if (discordChannel) {
-            // 이미지 스타일처럼 파란색 글자 링크 형태의 Embed 생성
+            
+            // 1. 상단 빨간색 테두리 임베드 카드 (스크린샷 첫번째 상단 카드 양식)
             const embed = new EmbedBuilder()
-              .setColor(0xFF0000) // 이미지 좌측의 강렬한 빨간색 테두리
+              .setColor('#FF0000') // 빨간색 테두리
               .setAuthor({ 
                 name: channelTitle, 
                 iconURL: target.icon || 'https://upload.wikimedia.org/wikipedia/commons/e/ef/YouTube_action_scraps_light.png' 
               })
-              .setTitle(videoTitle) // 파란색 링크 텍스트로 표시되는 제목
-              .setURL(videoUrl)     // 클릭 시 해당 영상으로 이동
+              .setTitle(videoTitle) // 클릭 가능한 파란색 제목
+              .setURL(videoUrl)
               .setFooter({ text: 'Youtube' })
               .setTimestamp(new Date(latestItem.snippet.publishedAt || Date.now()));
 
-            // 메세지 본문에 링크(videoUrl)를 같이 적어주면 디스코드 자동 임베드 카드도 함께 출력됩니다.
+            // 2. 메시지 본문에 videoUrl을 전송하여 디스코드 하단 영상 미리보기 자동 생성
             await discordChannel.send({
               content: `${videoUrl}`,
               embeds: [embed]
@@ -99,7 +106,7 @@ async function startYoutubeMonitoring(client) {
           }
         }
 
-        // 상태 업데이트
+        // 최신 비디오 ID 업데이트
         lastVideoState[channelId] = videoId;
 
       } catch (err) {
