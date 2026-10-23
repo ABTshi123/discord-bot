@@ -4,7 +4,6 @@ const { getConfig } = require('./chzzkNotifier');
 
 const lastTweetMap = new Map();
 
-// FxTwitter 및 FxEmbed API 백엔드
 function fetchLatestTweetApi(username) {
   return new Promise((resolve) => {
     const options = {
@@ -12,7 +11,7 @@ function fetchLatestTweetApi(username) {
       path: `/${username}/latest`,
       method: 'GET',
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) DiscordBot'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
       }
     };
 
@@ -50,10 +49,13 @@ async function checkLatestTweet(username, discordChannel) {
 
     const tweetId = tweet.id;
 
-    // 이미 감지해서 알림을 보낸 트윗이면 중복 발송 방지
     if (lastTweetMap.get(username) === tweetId) return;
 
-    // 💡 최신 트윗 ID 업데이트
+    if (!lastTweetMap.has(username)) {
+      lastTweetMap.set(username, tweetId);
+      return;
+    }
+
     lastTweetMap.set(username, tweetId);
 
     const tweetUrl = tweet.url || `https://x.com/${username}/status/${tweetId}`;
@@ -61,11 +63,9 @@ async function checkLatestTweet(username, discordChannel) {
     const authorName = `${tweet.author?.name || username} (@${username})`;
     const profileImg = tweet.author?.avatar_url || 'https://abs.twimg.com/icons/apple-touch-icon-192x192.png';
 
-    // 트위터 스페이스 URL 패턴 감지
     const spaceMatch = rawContent.match(/https?:\/\/(x|twitter)\.com\/i\/spaces\/[a-zA-Z0-9]+/i) ||
                        tweetUrl.match(/https?:\/\/(x|twitter)\.com\/i\/spaces\/[a-zA-Z0-9]+/i);
 
-    // 1. 트위터 스페이스 알림 (보라색 카드)
     if (spaceMatch) {
       const spaceUrl = spaceMatch[0].replace('twitter.com', 'x.com');
 
@@ -85,9 +85,7 @@ async function checkLatestTweet(username, discordChannel) {
       );
 
       await discordChannel.send({ embeds: [embed], components: [btn] });
-    } 
-    // 2. 일반 트윗 알림 (파란색 카드)
-    else {
+    } else {
       const embed = new EmbedBuilder()
         .setColor('#1DA1F2')
         .setAuthor({ name: authorName, iconURL: profileImg })
@@ -107,12 +105,11 @@ async function checkLatestTweet(username, discordChannel) {
       await discordChannel.send({ embeds: [embed], components: [btn] });
     }
   } catch (error) {
-    console.log(`[Twitter Monitor] @${username} 트윗 수신 확인 중...`);
+    console.log(`[Twitter Monitor Error] @${username}:`, error.message);
   }
 }
 
 async function startTwitterMonitoring(client) {
-  // 1분 간격 주기 모니터링
   setInterval(async () => {
     const config = getConfig();
     if (!config.twitter) return;
@@ -127,10 +124,10 @@ async function startTwitterMonitoring(client) {
           await checkLatestTweet(twitterId, discordChannel);
         }
       } catch (err) {
-        console.error(`[Twitter Monitor Error] @${twitterId}:`, err.message);
+        console.error(`[Twitter Fetch Exception] @${twitterId}:`, err.message);
       }
     }
-  }, 60000); // 60초 간격
+  }, 120000);
 }
 
 module.exports = { checkLatestTweet, startTwitterMonitoring };
