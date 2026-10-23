@@ -93,7 +93,6 @@ async function fetchLiveDetail(channelId) {
   return null;
 }
 
-// 스트리머 채널 이름 가져오기
 async function getChannelName(channelId) {
   try {
     const liveDetail = await fetchLiveDetail(channelId);
@@ -109,7 +108,7 @@ async function getChannelName(channelId) {
       if (channelInfo && channelInfo.channelName) return channelInfo.channelName;
     }
   } catch (e) {}
-  return null; // 이름 조회 실패시 null 반환하여 저장된 기존 이름 활용
+  return null;
 }
 
 function createLinkButton(url) {
@@ -121,7 +120,6 @@ function createLinkButton(url) {
   );
 }
 
-// 라이브 채팅 연결 및 타 채널 출몰 감지 로직
 async function connectStreamerChat(targetChannelId, hostStreamerName, client) {
   if (activeChatSockets[targetChannelId]) return;
 
@@ -140,17 +138,19 @@ async function connectStreamerChat(targetChannelId, hostStreamerName, client) {
       const liveUrl = `https://chzzk.naver.com/live/${targetChannelId}`;
       const profileImage = msg.profile.profileImageUrl || 'https://nng-phinf.pstatic.net/Chzzk_Logo.png';
 
-      // 1. 방장이 자기 채널 채팅창에 남긴 경우
+      // 1. 스트리머 본인 채팅
       if (msg.profile.isOwner) {
         const myConfig = config.chzzk[targetChannelId];
         if (myConfig && myConfig.channelId) {
           const discordChannel = await client.channels.fetch(myConfig.channelId).catch(() => null);
           if (discordChannel) {
             const embed = new EmbedBuilder()
-              .setColor(0x4287f5)
+              .setColor('#00FFA3')
               .setAuthor({ name: hostStreamerName, iconURL: profileImage })
               .setTitle(`${hostStreamerName}님이 채팅을 남겼어요.`)
-              .setDescription(chatMsg)
+              .setURL(liveUrl)
+              .setDescription(`## ${chatMsg}`)
+              .setFooter({ text: 'Chzzk', iconURL: 'https://nng-phinf.pstatic.net/Chzzk_Logo.png' })
               .setTimestamp();
 
             await discordChannel.send({
@@ -160,7 +160,7 @@ async function connectStreamerChat(targetChannelId, hostStreamerName, client) {
           }
         }
       } 
-      // 2. 다른 등록된 스트리머 채널에 출몰하여 메시지를 남긴 경우
+      // 2. 다른 방 출몰 채팅
       else {
         for (const streamerChannelId in config.chzzk) {
           if (streamerChannelId !== targetChannelId && streamerChannelId === senderUserIdHash) {
@@ -172,10 +172,12 @@ async function connectStreamerChat(targetChannelId, hostStreamerName, client) {
               const visitorName = msg.profile.nickname || registeredTarget.name || '스트리머';
 
               const embed = new EmbedBuilder()
-                .setColor(0x4287f5)
+                .setColor('#00FFA3')
                 .setAuthor({ name: visitorName, iconURL: profileImage })
                 .setTitle(`${visitorName}님이 ${hostStreamerName}님의 채팅창에 메시지를 남겼어요.`)
-                .setDescription(chatMsg)
+                .setURL(liveUrl)
+                .setDescription(`## ${chatMsg}`)
+                .setFooter({ text: 'Chzzk', iconURL: 'https://nng-phinf.pstatic.net/Chzzk_Logo.png' })
                 .setTimestamp();
 
               await discordChannel.send({
@@ -217,11 +219,8 @@ async function startChzzkMonitoring(client) {
         if (!liveDetail) continue;
 
         const isLive = liveDetail.status === 'OPEN';
+        const streamerName = liveDetail.channel?.channelName || target.name || '스트리머';
         
-        // 스트리머 이름 우선순위 처리 (API liveDetail > config 저장 이름 > 기본값)
-        const streamerName = liveDetail.channel?.channelName || target.name || '알 수 없는 스트리머';
-        
-        // config에 이름이 제대로 업데이트되어 있지 않다면 보완 저장
         if (!target.name || target.name === '스트리머') {
           config.chzzk[channelId].name = streamerName;
           saveConfig(config);
@@ -234,7 +233,6 @@ async function startChzzkMonitoring(client) {
 
         const discordChannel = await client.channels.fetch(target.channelId).catch(() => null);
 
-        // 💡 핵심: 처음 등록/실행되어 상태 기억(lastLiveStatus)이 없는 경우 감지 기준점만 세우고 알림 스킵
         if (!lastLiveStatus[channelId]) {
           lastLiveStatus[channelId] = { isLive, title: liveTitle, category };
           if (isLive && discordChannel) {
@@ -248,14 +246,15 @@ async function startChzzkMonitoring(client) {
         const prevCategory = lastLiveStatus[channelId].category;
 
         if (discordChannel) {
-          // 1. 방송 시작 알림 (실제 OFF -> ON일 때만 전송)
+          // 1. 방송 시작 알림 (사진 2번째 양식과 동일)
           if (isLive && !wasLive) {
             const embed = new EmbedBuilder()
-              .setColor(0x4287f5)
+              .setColor('#00FFA3') // 2번째 사진 네온 연두색
               .setAuthor({ name: streamerName, iconURL: profileImageUrl })
-              .setTitle(`${streamerName}님이 치지직 방송을 시작했어요!!`)
-              .setDescription(`**[${liveTitle}]**\n\n방송 카테고리: ${category}`)
-              .setFooter({ text: 'Chzzk' })
+              .setTitle(`${streamerName}님이 치지직\n방송을 시작했어요!!`)
+              .setURL(liveUrl) // 클릭 가능한 파란색 제목 링크
+              .setDescription(`## [${liveTitle}]\n\n**방송 카테고리: ${category}**`) // 크고 두꺼운 방송 제목
+              .setFooter({ text: 'Chzzk', iconURL: 'https://nng-phinf.pstatic.net/Chzzk_Logo.png' })
               .setTimestamp();
 
             await discordChannel.send({
@@ -264,14 +263,15 @@ async function startChzzkMonitoring(client) {
             });
             connectStreamerChat(channelId, streamerName, client);
           }
-          // 2. 방송 설정을 변경함 (방제/카테고리 변경)
+          // 2. 방송 설정 변경 알림
           else if (isLive && wasLive && (prevTitle !== liveTitle || prevCategory !== category)) {
             const embed = new EmbedBuilder()
-              .setColor(0x4287f5)
+              .setColor('#00FFA3')
               .setAuthor({ name: streamerName, iconURL: profileImageUrl })
               .setTitle(`${streamerName}님이 치지직 방송 설정을 변경하셨어요!`)
-              .setDescription(`**제목: [${liveTitle}]**`)
-              .setFooter({ text: 'Chzzk' })
+              .setURL(liveUrl)
+              .setDescription(`## [${liveTitle}]\n\n**방송 카테고리: ${category}**`)
+              .setFooter({ text: 'Chzzk', iconURL: 'https://nng-phinf.pstatic.net/Chzzk_Logo.png' })
               .setTimestamp();
 
             await discordChannel.send({
@@ -279,11 +279,9 @@ async function startChzzkMonitoring(client) {
               components: [createLinkButton(liveUrl)]
             });
           }
-          // 3. 방송 중 연결 유지
           else if (isLive) {
             connectStreamerChat(channelId, streamerName, client);
           }
-          // 4. 방송 종료 시 소켓 해제
           else if (!isLive && wasLive) {
             disconnectStreamerChat(channelId);
           }
