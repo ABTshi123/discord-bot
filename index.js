@@ -3,13 +3,9 @@ const express = require('express');
 const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const { startChzzkMonitoring, getConfig, saveConfig, getChannelName } = require('./chzzkNotifier');
 const { startYoutubeMonitoring, getYoutubeChannelInfo } = require('./youtubeNotifier');
-const { startTwitterMonitoring } = require('./twitterNotifier');
 
-// 1. Render 웹서버 24시간 가동 포트 바인딩
-// 1. Render Web Service 및 업타임로봇 응답용 Express 웹서버
+// 1. Render 웹서버 및 업타임로봇 Health Check 포트 바인딩
 const app = express();
-
-// 업타임로봇의 GET, HEAD 및 Health Check 요청에 모두 200 OK 응답
 app.get('/', (req, res) => res.status(200).send('Bot is Live!'));
 app.head('/', (req, res) => res.status(200).end());
 app.get('/health', (req, res) => res.status(200).send('OK'));
@@ -27,7 +23,7 @@ const client = new Client({
   ],
 });
 
-// 3. 디스코드 슬래시 커맨드 정의
+// 3. 디스코드 슬래시 커맨드 정의 (치지직 & 유튜브 전용)
 const commands = [
   // --- 치지직 커맨드 ---
   new SlashCommandBuilder()
@@ -60,22 +56,6 @@ const commands = [
     .setName('유튜브삭제')
     .setDescription('등록된 유튜브 알림 채널을 삭제합니다.')
     .addStringOption(opt => opt.setName('유튜브id').setDescription('삭제할 유튜브 channel ID').setRequired(true)),
-
-  // --- 트위터 커맨드 ---
-  new SlashCommandBuilder()
-    .setName('트위터등록')
-    .setDescription('트위터(X) 알림을 설정합니다.')
-    .addStringOption(opt => opt.setName('트위터id').setDescription('트위터 사용자 아이디 (예: arahashi_tabi)').setRequired(true))
-    .addChannelOption(opt => opt.setName('알림채널').setDescription('알림을 전송할 디스코드 채널').setRequired(true)),
-
-  new SlashCommandBuilder()
-    .setName('트위터목록')
-    .setDescription('현재 등록된 트위터 알림 목록을 조회합니다.'),
-
-  new SlashCommandBuilder()
-    .setName('트위터삭제')
-    .setDescription('등록된 트위터 알림을 삭제합니다.')
-    .addStringOption(opt => opt.setName('트위터id').setDescription('삭제할 트위터 아이디').setRequired(true)),
 ].map(cmd => cmd.toJSON());
 
 // 4. 봇 로그인 및 커맨드 등록
@@ -94,13 +74,12 @@ client.once('ready', async () => {
     console.error('커맨드 등록 실패:', err);
   }
 
-  // 모니터링 엔진 시작
+  // 치지직 & 유튜브 모니터링 엔진만 실행
   startChzzkMonitoring(client);
   startYoutubeMonitoring(client);
-  startTwitterMonitoring(client);
 });
 
-// 5. 슬래시 커맨드 수신 처리 (무한 로딩 및 타임아웃 방지 적용)
+// 5. 슬래시 커맨드 수신 처리
 client.on('interactionCreate', async interaction => {
   if (!interaction.isChatInputCommand()) return;
 
@@ -117,7 +96,8 @@ client.on('interactionCreate', async interaction => {
       let streamerName = '스트리머';
       try {
         if (typeof getChannelName === 'function') {
-          streamerName = await getChannelName(chId);
+          const name = await getChannelName(chId);
+          if (name) streamerName = name;
         }
       } catch (e) {
         console.log('[Chzzk Name Error]:', e.message);
@@ -138,7 +118,7 @@ client.on('interactionCreate', async interaction => {
         const item = config.chzzk[chId];
         listText += `• **스트리머**: **${item.name || '알 수 없음'}** (\`${chId}\`) ➡️ **알림 채널**: <#${item.channelId}>\n`;
       }
-      const embed = new EmbedBuilder().setColor(0x4287f5).setTitle('📋 등록된 치지직 알림 목록').setDescription(listText);
+      const embed = new EmbedBuilder().setColor('#00FFA3').setTitle('📋 등록된 치지직 알림 목록').setDescription(listText);
       await interaction.reply({ embeds: [embed], ephemeral: true });
     } 
     else if (commandName === '치지직삭제') {
@@ -179,7 +159,7 @@ client.on('interactionCreate', async interaction => {
         const item = config.youtube[ytId];
         listText += `• **유튜브 채널**: **${item.name || '알 수 없음'}** (\`${ytId}\`) ➡️ **알림 채널**: <#${item.channelId}>\n`;
       }
-      const embed = new EmbedBuilder().setColor(0xFF0000).setTitle('📋 등록된 유튜브 알림 목록').setDescription(listText);
+      const embed = new EmbedBuilder().setColor('#FF0000').setTitle('📋 등록된 유튜브 알림 목록').setDescription(listText);
       await interaction.reply({ embeds: [embed], ephemeral: true });
     } 
     else if (commandName === '유튜브삭제') {
@@ -192,44 +172,10 @@ client.on('interactionCreate', async interaction => {
       saveConfig(config);
       await interaction.reply({ content: `❌ **${channelName}** (\`${ytId}\`) 유튜브 채널 알림이 삭제되었습니다.`, ephemeral: true });
     }
-
-    // --- 트위터 명령어 ---
-    else if (commandName === '트위터등록') {
-      await interaction.deferReply({ ephemeral: true });
-      const twId = interaction.options.getString('트위터id');
-      const targetChannel = interaction.options.getChannel('알림채널');
-
-      if (!config.twitter) config.twitter = {};
-      config.twitter[twId] = { channelId: targetChannel.id };
-      saveConfig(config);
-
-      await interaction.editReply({ content: `✅ 트위터 **@${twId}** 알림이 <#${targetChannel.id}> 채널로 등록되었습니다!` });
-    } 
-    else if (commandName === '트위터목록') {
-      if (!config.twitter || Object.keys(config.twitter).length === 0) {
-        return await interaction.reply({ content: '📋 현재 등록된 트위터 알림 채널이 없습니다.', ephemeral: true });
-      }
-      let listText = '';
-      for (const twId in config.twitter) {
-        const item = config.twitter[twId];
-        listText += `• **트위터**: **@${twId}** ➡️ **알림 채널**: <#${item.channelId}>\n`;
-      }
-      const embed = new EmbedBuilder().setColor(0x1DA1F2).setTitle('📋 등록된 트위터 알림 목록').setDescription(listText);
-      await interaction.reply({ embeds: [embed], ephemeral: true });
-    } 
-    else if (commandName === '트위터삭제') {
-      const twId = interaction.options.getString('트위터id');
-      if (!config.twitter || !config.twitter[twId]) {
-        return await interaction.reply({ content: `❌ 등록되지 않은 트위터 ID입니다: \`@${twId}\``, ephemeral: true });
-      }
-      delete config.twitter[twId];
-      saveConfig(config);
-      await interaction.reply({ content: `❌ **@${twId}** 트위터 알림이 삭제되었습니다.`, ephemeral: true });
-    }
   } catch (error) {
-    console.error(`[Command Execution Error] ${commandName}:`, error);
+    console.error(`[Command Error] ${commandName}:`, error);
     if (interaction.deferred) {
-      await interaction.editReply({ content: '❌ 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.' }).catch(() => null);
+      await interaction.editReply({ content: '❌ 처리 중 오류가 발생했습니다. 다시 시도해 주세요.' }).catch(() => null);
     }
   }
 });
