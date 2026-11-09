@@ -10,6 +10,7 @@ const youtube = google.youtube({
 
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 const lastVideoState = {};
+const channelIconCache = {}; // 채널 프로필 이미지 캐시
 
 function getConfig() {
   if (!fs.existsSync(CONFIG_PATH)) return {};
@@ -24,8 +25,10 @@ function saveConfig(data) {
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(data, null, 2), 'utf8');
 }
 
-// 유튜브 채널 정보 가져오기
+// 유튜브 채널 프로필 및 정보 가져오기
 async function getYoutubeChannelInfo(channelId) {
+  if (channelIconCache[channelId]) return channelIconCache[channelId];
+
   try {
     const res = await youtube.channels.list({
       part: ['snippet'],
@@ -34,10 +37,12 @@ async function getYoutubeChannelInfo(channelId) {
 
     if (res.data.items && res.data.items.length > 0) {
       const item = res.data.items[0].snippet;
-      return {
+      const info = {
         title: item.title,
-        icon: item.thumbnails?.default?.url || ''
+        icon: item.thumbnails?.default?.url || item.thumbnails?.high?.url || ''
       };
+      channelIconCache[channelId] = info;
+      return info;
     }
   } catch (e) {
     console.error(`[YouTube Channel Info Error] ${channelId}:`, e.message);
@@ -72,8 +77,11 @@ async function startYoutubeMonitoring(client) {
         const videoTitle = latestItem.snippet.title;
         const channelTitle = latestItem.snippet.channelTitle;
         
-        // 쇼츠(Shorts) 또는 일반 영상 URL 구분
-        // search API 특성상 기본 watch URL로 연결하되, 쇼츠 단어가 포함되면 쇼츠 형태로 구성
+        // 채널 프로필 아이콘 조회
+        const channelInfo = await getYoutubeChannelInfo(channelId);
+        const profileIcon = channelInfo.icon || 'https://upload.wikimedia.org/wikipedia/commons/e/ef/YouTube_action_scraps_light.png';
+
+        // Shorts 구분
         const isShorts = videoTitle.toLowerCase().includes('#shorts') || videoTitle.toLowerCase().includes('#short');
         const videoUrl = isShorts 
           ? `https://www.youtube.com/shorts/${videoId}` 
@@ -81,24 +89,25 @@ async function startYoutubeMonitoring(client) {
 
         const prevVideoId = lastVideoState[channelId];
 
-        // 새로운 영상 감지 시 알림
+        // 새 영상 감지 시 2번째 사진 양식으로 발송
         if (prevVideoId && prevVideoId !== videoId) {
           const discordChannel = await client.channels.fetch(target.channelId).catch(() => null);
           if (discordChannel) {
             
-            // 1. 상단 빨간색 테두리 임베드 카드 (스크린샷 첫번째 상단 카드 양식)
+            // 1. 상단 알림 임베드 (프로필 아이콘 정상 출력 + 썸네일 작게 우측 배치)
             const embed = new EmbedBuilder()
-              .setColor('#FF0000') // 빨간색 테두리
+              .setColor('#FF0000')
               .setAuthor({ 
                 name: channelTitle, 
-                iconURL: target.icon || 'https://upload.wikimedia.org/wikipedia/commons/e/ef/YouTube_action_scraps_light.png' 
+                iconURL: profileIcon 
               })
-              .setTitle(videoTitle) // 클릭 가능한 파란색 제목
+              .setTitle(videoTitle)
               .setURL(videoUrl)
+              .setThumbnail(latestItem.snippet.thumbnails?.default?.url || latestItem.snippet.thumbnails?.high?.url)
               .setFooter({ text: 'Youtube' })
               .setTimestamp(new Date(latestItem.snippet.publishedAt || Date.now()));
 
-            // 2. 메시지 본문에 videoUrl을 전송하여 디스코드 하단 영상 미리보기 자동 생성
+            // 2. 메시지 본문에 videoUrl 전송 ➔ 디스코드 하단 큰 동영상 플레이어 자동 생성
             await discordChannel.send({
               content: `${videoUrl}`,
               embeds: [embed]
@@ -106,7 +115,6 @@ async function startYoutubeMonitoring(client) {
           }
         }
 
-        // 최신 비디오 ID 업데이트
         lastVideoState[channelId] = videoId;
 
       } catch (err) {
