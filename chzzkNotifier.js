@@ -132,7 +132,6 @@ async function connectStreamerChat(targetChannelId, hostStreamerName, client) {
     chat.on('chat', async (msg) => {
       if (!msg || !msg.profile) return;
 
-      // 채팅 내용 safe 파싱 (undefined 방지)
       const chatMsg = msg.hidden 
         ? '숨겨진 메시지입니다.' 
         : (msg.msg || msg.message || msg.content || '');
@@ -142,12 +141,11 @@ async function connectStreamerChat(targetChannelId, hostStreamerName, client) {
       const senderUserIdHash = msg.profile.userIdHash || msg.userIdHash || '';
       const msgTime = msg.time || msg.msgTime || Date.now();
       
-      // 중복 전송 방지 키 생성
       const cacheKey = `${targetChannelId}_${senderUserIdHash}_${chatMsg}_${msgTime}`;
       if (recentMsgCache.has(cacheKey)) return;
       
       recentMsgCache.add(cacheKey);
-      setTimeout(() => recentMsgCache.delete(cacheKey), 30000); // 30초 후 캐시 삭제
+      setTimeout(() => recentMsgCache.delete(cacheKey), 30000);
 
       const config = getConfig();
       if (!config.chzzk) return;
@@ -167,7 +165,7 @@ async function connectStreamerChat(targetChannelId, hostStreamerName, client) {
               .setTitle(`${hostStreamerName}님이 채팅을 남겼어요.`)
               .setURL(liveUrl)
               .setDescription(`## ${chatMsg}`)
-              .setFooter({ text: 'Chzzk', iconURL: 'https://nng-phinf.pstatic.net/Chzzk_Logo.png' })
+              .setFooter({ text: 'Chzzk' }) // 푸터 아이콘 제거
               .setTimestamp();
 
             await discordChannel.send({
@@ -194,7 +192,7 @@ async function connectStreamerChat(targetChannelId, hostStreamerName, client) {
                 .setTitle(`${visitorName}님이 ${hostStreamerName}님의 채팅창에 메시지를 남겼어요.`)
                 .setURL(liveUrl)
                 .setDescription(`## ${chatMsg}`)
-                .setFooter({ text: 'Chzzk', iconURL: 'https://nng-phinf.pstatic.net/Chzzk_Logo.png' })
+                .setFooter({ text: 'Chzzk' }) // 푸터 아이콘 제거
                 .setTimestamp();
 
               await discordChannel.send({
@@ -271,7 +269,7 @@ async function startChzzkMonitoring(client) {
               .setTitle(`${streamerName}님이 치지직\n방송을 시작했어요!!`)
               .setURL(liveUrl)
               .setDescription(`## [${liveTitle}]\n\n**방송 카테고리: ${category}**`)
-              .setFooter({ text: 'Chzzk', iconURL: 'https://nng-phinf.pstatic.net/Chzzk_Logo.png' })
+              .setFooter({ text: 'Chzzk' }) // 푸터 아이콘 제거
               .setTimestamp();
 
             await discordChannel.send({
@@ -288,7 +286,7 @@ async function startChzzkMonitoring(client) {
               .setTitle(`${streamerName}님이 치지직 방송 설정을 변경하셨어요!`)
               .setURL(liveUrl)
               .setDescription(`## [${liveTitle}]\n\n**방송 카테고리: ${category}**`)
-              .setFooter({ text: 'Chzzk', iconURL: 'https://nng-phinf.pstatic.net/Chzzk_Logo.png' })
+              .setFooter({ text: 'Chzzk' }) // 푸터 아이콘 제거
               .setTimestamp();
 
             await discordChannel.send({
