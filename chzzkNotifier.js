@@ -9,6 +9,7 @@ const CONFIG_PATH = path.join(__dirname, 'config.json');
 
 const lastLiveStatus = {};
 const activeChatSockets = {};
+const recentMsgCache = new Set(); // 중복 메시지 방지 캐시
 
 function getConfig() {
   if (!fs.existsSync(CONFIG_PATH)) return {};
@@ -120,6 +121,7 @@ function createLinkButton(url) {
   );
 }
 
+// 라이브 채팅 연결 및 본인/타 채널 출몰 감지 로직
 async function connectStreamerChat(targetChannelId, hostStreamerName, client) {
   if (activeChatSockets[targetChannelId]) return;
 
@@ -128,17 +130,32 @@ async function connectStreamerChat(targetChannelId, hostStreamerName, client) {
     activeChatSockets[targetChannelId] = chat;
 
     chat.on('chat', async (msg) => {
-      if (!msg.profile) return;
+      if (!msg || !msg.profile) return;
+
+      // 채팅 내용 safe 파싱 (undefined 방지)
+      const chatMsg = msg.hidden 
+        ? '숨겨진 메시지입니다.' 
+        : (msg.msg || msg.message || msg.content || '');
+
+      if (!chatMsg.trim()) return;
+
+      const senderUserIdHash = msg.profile.userIdHash || msg.userIdHash || '';
+      const msgTime = msg.time || msg.msgTime || Date.now();
+      
+      // 중복 전송 방지 키 생성
+      const cacheKey = `${targetChannelId}_${senderUserIdHash}_${chatMsg}_${msgTime}`;
+      if (recentMsgCache.has(cacheKey)) return;
+      
+      recentMsgCache.add(cacheKey);
+      setTimeout(() => recentMsgCache.delete(cacheKey), 30000); // 30초 후 캐시 삭제
 
       const config = getConfig();
       if (!config.chzzk) return;
 
-      const senderUserIdHash = msg.profile.userIdHash || msg.userIdHash;
-      const chatMsg = msg.hidden ? '숨겨진 메시지입니다.' : msg.msg;
       const liveUrl = `https://chzzk.naver.com/live/${targetChannelId}`;
       const profileImage = msg.profile.profileImageUrl || 'https://nng-phinf.pstatic.net/Chzzk_Logo.png';
 
-      // 1. 스트리머 본인 채팅
+      // 1. 방장이 자기 채널 채팅창에 남긴 경우
       if (msg.profile.isOwner) {
         const myConfig = config.chzzk[targetChannelId];
         if (myConfig && myConfig.channelId) {
@@ -160,7 +177,7 @@ async function connectStreamerChat(targetChannelId, hostStreamerName, client) {
           }
         }
       } 
-      // 2. 다른 방 출몰 채팅
+      // 2. 다른 등록된 스트리머 채널에 출몰하여 메시지를 남긴 경우
       else {
         for (const streamerChannelId in config.chzzk) {
           if (streamerChannelId !== targetChannelId && streamerChannelId === senderUserIdHash) {
@@ -246,14 +263,14 @@ async function startChzzkMonitoring(client) {
         const prevCategory = lastLiveStatus[channelId].category;
 
         if (discordChannel) {
-          // 1. 방송 시작 알림 (사진 2번째 양식과 동일)
+          // 1. 방송 시작 알림
           if (isLive && !wasLive) {
             const embed = new EmbedBuilder()
-              .setColor('#00FFA3') // 2번째 사진 네온 연두색
+              .setColor('#00FFA3')
               .setAuthor({ name: streamerName, iconURL: profileImageUrl })
               .setTitle(`${streamerName}님이 치지직\n방송을 시작했어요!!`)
-              .setURL(liveUrl) // 클릭 가능한 파란색 제목 링크
-              .setDescription(`## [${liveTitle}]\n\n**방송 카테고리: ${category}**`) // 크고 두꺼운 방송 제목
+              .setURL(liveUrl)
+              .setDescription(`## [${liveTitle}]\n\n**방송 카테고리: ${category}**`)
               .setFooter({ text: 'Chzzk', iconURL: 'https://nng-phinf.pstatic.net/Chzzk_Logo.png' })
               .setTimestamp();
 
